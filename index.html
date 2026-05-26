@@ -197,6 +197,13 @@
       text-overflow: ellipsis;
     }
 
+    .hotbar-icon {
+      position: absolute;
+      top: 6px;
+      right: 7px;
+      font: 20px/1 Arial, sans-serif;
+    }
+
     .hotbar-count {
       position: absolute;
       right: 7px;
@@ -1004,13 +1011,13 @@
         showEvent("Border Check", "Uniformed guards flag down the train and demand to inspect the cargo manifest.", [
           { label: "Show Papers", action: () => { state.cargo -= Math.random() < 0.35 ? 8 : 0; addLog("The checkpoint delays you, but the train moves on."); closeEvent(); } },
           { label: "Pay $35", action: () => { spendOrConsequence(35, () => addLog("The guards wave you through after the payment.")); closeEvent(); } },
-          { label: "Run It", action: () => { state.train -= 12; state.fuel -= 8; spawnPack("bandit", 3); addLog("Rifles crack from the checkpoint tower."); closeEvent(); } }
+          { label: "Run It", action: () => { checkpointRunConsequence(); closeEvent(); } }
         ]);
       } else if (r < 0.58) {
         showEvent("Corrupt Lawmen", "A badge gang boards at low speed. Their captain asks for a private tax.", [
           { label: "Pay $45", action: () => { spendOrConsequence(45, () => addLog("The lawmen pocket the money and step aside.")); closeEvent(); } },
-          { label: "Refuse", action: () => { spawnPack("police", 4); state.crew -= 8; addLog("The corrupt patrol opens fire inside the cars."); closeEvent(); } },
-          { label: "Hide Cargo", action: () => { const ok = Math.random() < 0.55; state.cargo -= ok ? 0 : 15; addLog(ok ? "The cargo stays hidden." : "They find one crate and mark it seized."); closeEvent(); } }
+          { label: "Refuse", action: () => { refuseLawConsequence(); closeEvent(); } },
+          { label: "Hide Cargo", action: () => { hideCargoCheck(); closeEvent(); } }
         ]);
       } else if (r < 0.8) {
         spawnBounty();
@@ -1020,6 +1027,42 @@
           { label: "Take Fuel", action: () => { state.fuel = Math.min(state.maxFuel, state.fuel + 25); addLog("Spare coal gets loaded fast."); closeEvent(); } },
           { label: "Avoid", action: () => { addLog("You leave the camp untouched."); closeEvent(); } }
         ]);
+      }
+    }
+
+    function checkpointRunConsequence() {
+      if (!state.devMode) {
+        state.train -= 18 + Math.random() * 12;
+        state.fuel = Math.max(0, state.fuel - 14);
+        state.cargo -= Math.random() < 0.35 ? 10 : 0;
+      }
+      spawnPack("police", 3);
+      spawnPack("bandit", 2);
+      state.nextEncounter = Math.min(state.nextEncounter, state.distance + 7);
+      addLog("You run the checkpoint. A pursuit posse opens fire and another stop is alerted ahead.");
+    }
+
+    function refuseLawConsequence() {
+      if (!state.devMode) {
+        state.crew -= 12;
+        state.cargo -= Math.random() < 0.45 ? 12 : 0;
+      }
+      spawnPack("police", 5);
+      state.nextEncounter = Math.min(state.nextEncounter, state.distance + 9);
+      addLog("You refuse the corrupt patrol. They mark the train and call in armed riders.");
+    }
+
+    function hideCargoCheck() {
+      const detected = Math.random() < 0.28;
+      if (detected) {
+        if (!state.devMode) {
+          state.cargo -= 24;
+          state.crew -= 7;
+        }
+        spawnPack("police", 3);
+        addLog("They spot the hidden payload. Cargo is seized and the patrol turns violent.");
+      } else {
+        addLog("The hidden payload passes inspection this time.");
       }
     }
 
@@ -1156,7 +1199,11 @@
     function spawnEnemy(type) {
       if (state.distance < 4) return;
       const night = isNight();
-      const enemyType = night && Math.random() < 0.72 ? "zombie" : (Math.random() < 0.72 ? "bandit" : "raider");
+      let enemyType = Math.random() < 0.72 ? "bandit" : "raider";
+      if (night) {
+        const z = Math.random();
+        enemyType = z < 0.58 ? "zombie" : z < 0.8 ? "zombieSheriff" : "dynamiteZombie";
+      }
       spawnOne(type || enemyType);
     }
 
@@ -1167,17 +1214,17 @@
     function spawnOne(type, origin) {
       const side = Math.random() < 0.5 ? -1 : 1;
       const y = 330 + Math.random() * 210;
-      const hp = type === "zombie" ? 18 : type === "bounty" ? state.bounty.hp : 24;
+      const hp = type === "zombie" ? 18 : type === "zombieSheriff" ? 30 : type === "dynamiteZombie" ? 22 : type === "bounty" ? state.bounty.hp : 24;
       enemies.push({
         type,
         x: origin ? origin.x : side < 0 ? -40 : window.innerWidth + 40,
         y: origin ? origin.y : y,
         hp,
         maxHp: hp,
-        speed: type === "zombie" ? 38 + Math.random() * 18 : 66 + Math.random() * 34,
-        attack: type === "zombie" ? 7 : type === "police" ? 9 : 8,
+        speed: type === "zombie" ? 38 + Math.random() * 18 : type === "dynamiteZombie" ? 54 + Math.random() * 22 : type === "zombieSheriff" ? 34 + Math.random() * 14 : 66 + Math.random() * 34,
+        attack: type === "dynamiteZombie" ? 18 : type === "zombie" || type === "zombieSheriff" ? 7 : type === "police" ? 9 : 8,
         value: type === "bounty" ? state.bounty.reward : type === "police" ? 22 : 15,
-        shootClock: type === "zombie" ? 999 : 0.8 + Math.random() * 1.7,
+        shootClock: type === "zombieSheriff" ? 1.2 + Math.random() * 1.5 : type === "zombie" || type === "dynamiteZombie" ? 999 : 0.8 + Math.random() * 1.7,
         side
       });
     }
@@ -1200,8 +1247,10 @@
       const houses = housePositions().filter(house => house.x > 20 && house.x < window.innerWidth - 20);
       if (!houses.length) return;
       const house = houses[Math.floor(Math.random() * houses.length)];
-      spawnOne("zombie", { x: house.x + 22, y: house.y + 50 });
-      addLog("A zombie stumbles out of an abandoned house.");
+      const roll = Math.random();
+      const type = roll < 0.72 ? "zombie" : roll < 0.9 ? "zombieSheriff" : "dynamiteZombie";
+      spawnOne(type, { x: house.x + 22, y: house.y + 50 });
+      addLog(type === "zombie" ? "A zombie stumbles out of an abandoned house." : type === "zombieSheriff" ? "A zombie sheriff limps out with an old pistol." : "A dynamite zombie crawls out clutching a lit bundle.");
     }
 
     function spawnBounty() {
@@ -1219,7 +1268,7 @@
         const dx = targetX - e.x;
         const dy = targetY - e.y;
         const dist = Math.hypot(dx, dy) || 1;
-        const hasGun = e.type === "bandit" || e.type === "raider" || e.type === "police" || e.type === "bounty";
+        const hasGun = e.type === "bandit" || e.type === "raider" || e.type === "police" || e.type === "bounty" || e.type === "zombieSheriff";
         const holdRange = hasGun ? 235 : 92;
         if (dist > holdRange) {
           e.x += dx / dist * e.speed * dt;
@@ -1232,14 +1281,19 @@
           e.shootClock -= dt;
           if (e.shootClock <= 0) {
             enemyFire(e, targetX, targetY);
-            e.shootClock = e.type === "bounty" ? 0.9 + Math.random() * 0.8 : 1.35 + Math.random() * 1.2;
+            e.shootClock = e.type === "zombieSheriff" ? 1.9 + Math.random() * 1.6 : e.type === "bounty" ? 0.9 + Math.random() * 0.8 : 1.35 + Math.random() * 1.2;
           }
         }
         if (dist < 92) {
+          if (e.type === "dynamiteZombie") {
+            dynamiteZombieBlast(e);
+            e.hp = 0;
+            return;
+          }
           if (!state.devMode) {
             state.train -= e.attack * dt * 0.42;
             state.cargo -= e.type === "bandit" || e.type === "bounty" ? dt * 1.1 : 0;
-            state.crew -= e.type === "zombie" ? dt * 1.4 : dt * 0.55;
+            state.crew -= e.type === "zombie" || e.type === "zombieSheriff" ? dt * 1.4 : dt * 0.55;
           }
           state.shake = 4;
         }
@@ -1254,11 +1308,23 @@
       const dx = targetX - e.x;
       const dy = targetY - e.y;
       const d = Math.hypot(dx, dy) || 1;
-      const spread = (Math.random() - 0.5) * 0.26;
-      const vx = dx / d * 520 + dy / d * spread * 520;
-      const vy = dy / d * 520 - dx / d * spread * 520;
-      enemyShots.push({ x: e.x, y: e.y - 18, vx, vy, life: 1.05, damage: e.type === "bounty" ? 10 : 6 });
+      const spread = (Math.random() - 0.5) * (e.type === "zombieSheriff" ? 0.78 : 0.26);
+      const speed = e.type === "zombieSheriff" ? 430 : 520;
+      const vx = dx / d * speed + dy / d * spread * speed;
+      const vy = dy / d * speed - dx / d * spread * speed;
+      enemyShots.push({ x: e.x, y: e.y - 18, vx, vy, life: 1.05, damage: e.type === "zombieSheriff" ? 4 : e.type === "bounty" ? 10 : 6 });
       burst(e.x, e.y - 18, "#ffda87", 4);
+    }
+
+    function dynamiteZombieBlast(e) {
+      burst(e.x, e.y, "#ffdf72", 70);
+      if (!state.devMode) {
+        state.train -= 22;
+        state.crew -= 10;
+        state.cargo -= 6;
+      }
+      state.shake = 15;
+      addLog("A dynamite zombie explodes against the train.");
     }
 
     function updateBullets(dt) {
@@ -1270,7 +1336,7 @@
           if (b.life > 0 && Math.hypot(e.x - b.x, e.y - b.y) < 24) {
             e.hp -= b.damage;
             b.life = 0;
-            burst(e.x, e.y, e.type === "zombie" ? "#7faf55" : "#d8a23c", 8);
+            burst(e.x, e.y, e.type === "zombie" || e.type === "zombieSheriff" || e.type === "dynamiteZombie" ? "#7faf55" : "#d8a23c", 8);
             if (e.hp <= 0) killEnemy(e);
           }
         });
@@ -1412,16 +1478,18 @@
       if (state.mode !== "play" || pausedForEvent || state.dynamite <= 0) return;
       if (!state.devMode) state.dynamite--;
       burst(aim.x, aim.y, "#ffdf72", 70);
+      let hits = 0;
       enemies.forEach(e => {
         const dist = Math.hypot(e.x - aim.x, e.y - aim.y);
         if (dist < 190) {
           e.hp -= 78 * (1 - dist / 230);
+          hits++;
           if (e.hp <= 0) killEnemy(e);
         }
       });
       enemies = enemies.filter(e => e.hp > 0);
       state.shake = 13;
-      addLog("Dynamite blows open the trackside crowd.");
+      addLog(`Dynamite explodes at your crosshair, damaging ${hits} enemies in a wide blast radius.`);
     }
 
     function repair() {
@@ -1475,12 +1543,12 @@
 
     function hotbarItems() {
       return [
-        { id: "gun", key: "1", name: state.gun, count: state.devMode ? "INF" : state.ammo, use: shoot },
-        { id: "melee", key: "2", name: state.meleeWeapon, count: "Melee", use: melee },
-        { id: "shovel", key: "3", name: state.hasShovel ? "shovel" : "empty", count: state.hasShovel ? "Tool" : "-", use: useShovel, disabled: !state.hasShovel },
-        { id: "molotov", key: "4", name: "molotov", count: state.devMode ? "INF" : state.molotovs, use: molotov },
-        { id: "dynamite", key: "5", name: "dynamite", count: state.devMode ? "INF" : state.dynamite, use: throwDynamite },
-        { id: "repair", key: "6", name: "repair kit", count: state.devMode ? "INF" : state.repairs, use: repair }
+        { id: "gun", key: "1", icon: "G", name: state.gun, count: state.devMode ? "INF" : state.ammo, use: shoot },
+        { id: "melee", key: "2", icon: "S", name: state.meleeWeapon, count: "Melee", use: melee },
+        { id: "shovel", key: "3", icon: "H", name: state.hasShovel ? "shovel" : "empty", count: state.hasShovel ? "Tool" : "-", use: useShovel, disabled: !state.hasShovel },
+        { id: "molotov", key: "4", icon: "M", name: "molotov", count: state.devMode ? "INF" : state.molotovs, use: molotov },
+        { id: "dynamite", key: "5", icon: "D", name: "dynamite", count: state.devMode ? "INF" : state.dynamite, use: throwDynamite },
+        { id: "repair", key: "6", icon: "R", name: "repair kit", count: state.devMode ? "INF" : state.repairs, use: repair }
       ];
     }
 
@@ -1492,7 +1560,7 @@
         const slot = document.createElement("button");
         slot.className = `hotbar-slot${index === state.selectedSlot ? " selected" : ""}`;
         slot.disabled = !!item.disabled;
-        slot.innerHTML = `<span class="hotbar-key">${item.key}</span><span class="hotbar-name">${item.name}</span><span class="hotbar-count">${item.count}</span>`;
+        slot.innerHTML = `<span class="hotbar-key">${item.key}</span><span class="hotbar-icon">${item.icon}</span><span class="hotbar-name">${item.name}</span><span class="hotbar-count">${item.count}</span>`;
         slot.addEventListener("click", () => {
           state.selectedSlot = index;
           renderHotbar();
@@ -1914,6 +1982,8 @@
     function drawEnemy(e) {
       const colors = {
         zombie: "#6f944e",
+        zombieSheriff: "#5f7f50",
+        dynamiteZombie: "#78944e",
         bandit: "#8e3325",
         raider: "#b16a37",
         police: "#314f6d",
@@ -1925,13 +1995,31 @@
       ctx.fill();
       ctx.fillStyle = colors[e.type] || "#8e3325";
       ctx.fillRect(e.x - 12, e.y - 16, 24, 34);
-      ctx.fillStyle = e.type === "zombie" ? "#b7d286" : "#d8b27f";
+      ctx.fillStyle = e.type === "zombie" || e.type === "zombieSheriff" || e.type === "dynamiteZombie" ? "#b7d286" : "#d8b27f";
       ctx.beginPath();
       ctx.arc(e.x, e.y - 26, 11, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#120d0a";
       ctx.fillRect(e.x - 18, e.y - 38, 36, 8);
-      if (e.type !== "zombie") {
+      if (e.type === "zombieSheriff") {
+        ctx.fillStyle = "#6f4d2d";
+        ctx.fillRect(e.x - 21, e.y - 44, 42, 7);
+        ctx.fillRect(e.x - 9, e.y - 58, 18, 16);
+        ctx.strokeStyle = "#1a120d";
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.moveTo(e.x + 8, e.y - 6);
+        ctx.lineTo(e.x + 30, e.y - 19);
+        ctx.stroke();
+      } else if (e.type === "dynamiteZombie") {
+        ctx.fillStyle = "#8c4b31";
+        ctx.fillRect(e.x - 24, e.y - 4, 12, 30);
+        ctx.fillRect(e.x - 10, e.y - 5, 12, 32);
+        ctx.fillStyle = "#ffcf57";
+        ctx.beginPath();
+        ctx.arc(e.x - 9, e.y - 12, 6 + Math.sin(state.time * 12) * 2, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (e.type !== "zombie") {
         const muzzleSide = e.x < window.innerWidth * 0.5 ? 1 : -1;
         ctx.strokeStyle = "#1a120d";
         ctx.lineWidth = 5;
@@ -2052,6 +2140,39 @@
         ctx.fillRect(14, -16, 18, 156);
         ctx.fillStyle = "#8d9189";
         ctx.fillRect(2, -34, 42, 24);
+        ctx.restore();
+        return;
+      }
+      if (state && state.selectedSlot === 3) {
+        ctx.fillStyle = "#7b3c2b";
+        ctx.fillRect(18, 0, 38, 76);
+        ctx.fillStyle = "#3c7d46";
+        ctx.fillRect(23, -12, 28, 18);
+        ctx.fillStyle = "#ff9b36";
+        ctx.beginPath();
+        ctx.arc(37, -18, 9 + state.muzzleFlash * 8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        return;
+      }
+      if (state && state.selectedSlot === 4) {
+        ctx.fillStyle = "#8c4b31";
+        for (let i = 0; i < 3; i++) ctx.fillRect(4 + i * 19, -4 + i * 2, 15, 88);
+        ctx.fillStyle = "#d8c47c";
+        ctx.fillRect(0, 10, 70, 10);
+        ctx.fillStyle = "#ffcf57";
+        ctx.beginPath();
+        ctx.arc(62, -8, 7 + state.muzzleFlash * 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        return;
+      }
+      if (state && state.selectedSlot === 5) {
+        ctx.fillStyle = "#b84a36";
+        ctx.fillRect(0, 0, 80, 56);
+        ctx.fillStyle = "#f7e7b6";
+        ctx.fillRect(28, 8, 24, 40);
+        ctx.fillRect(18, 18, 44, 20);
         ctx.restore();
         return;
       }
