@@ -76,7 +76,7 @@
       position: absolute;
       inset: 12px 12px auto 12px;
       display: grid;
-      grid-template-columns: repeat(10, minmax(68px, 1fr));
+      grid-template-columns: repeat(11, minmax(64px, 1fr));
       gap: 8px;
       pointer-events: none;
     }
@@ -504,7 +504,8 @@
     <section class="hud" aria-live="polite">
       <div class="meter"><span>Train</span><strong id="hudTrain">100</strong></div>
       <div class="meter"><span>Cargo</span><strong id="hudCargo">100</strong></div>
-      <div class="meter"><span>Crew</span><strong id="hudCrew">100</strong></div>
+      <div class="meter"><span>Health</span><strong id="hudCrew">100</strong></div>
+      <div class="meter"><span>Fort</span><strong id="hudFort">Open</strong></div>
       <div class="meter"><span>Fuel</span><strong id="hudFuel">100</strong></div>
       <div class="meter"><span>Ammo</span><strong id="hudAmmo">36</strong></div>
       <div class="meter"><span>Molotovs</span><strong id="hudMolo">2</strong></div>
@@ -602,6 +603,7 @@
       train: document.getElementById("hudTrain"),
       cargo: document.getElementById("hudCargo"),
       crew: document.getElementById("hudCrew"),
+      fort: document.getElementById("hudFort"),
       fuel: document.getElementById("hudFuel"),
       ammo: document.getElementById("hudAmmo"),
       molo: document.getElementById("hudMolo"),
@@ -640,11 +642,19 @@
     const zones = [
       { at: 0, name: "Depot Flats", sky: "#d58b55", ground: "#8a5131" },
       { at: 38, name: "Coyote Canyon", sky: "#b66842", ground: "#6f3a28" },
+      { at: 62, name: "Fort Ironside", sky: "#9a754e", ground: "#54442f" },
       { at: 78, name: "Border Line", sky: "#96744f", ground: "#54442f" },
       { at: 118, name: "Ash Pine Woods", sky: "#5c7564", ground: "#313d2f" },
+      { at: 138, name: "Fort Lantern", sky: "#687d62", ground: "#313d2f" },
       { at: 158, name: "Bonefield Pass", sky: "#6a5d75", ground: "#3b3341" },
       { at: 190, name: "Fort Mercy Gate", sky: "#718d75", ground: "#3f563d" },
       { at: 220, name: "Fort Mercy Yard", sky: "#789374", ground: "#3f563d" }
+    ];
+
+    const forts = [
+      { at: 62, name: "Fort Ironside", width: 18, guns: 2, shop: false },
+      { at: 138, name: "Fort Lantern", width: 20, guns: 3, shop: false },
+      { at: 196, name: "Fort Mercy", width: 30, guns: 4, shop: true }
     ];
 
     const shopItems = [
@@ -736,6 +746,10 @@
         fighterClock: 0.7,
         maximClock: 0.3,
         workerClock: 1.2,
+        fortGunClock: 0.18,
+        fortSafeLog: false,
+        guardPursuit: 0,
+        guardSpawnClock: 0,
         time: 0,
         dayLength: 72,
         nextEncounter: 13,
@@ -817,6 +831,11 @@
       return cycle > state.dayLength * 0.55;
     }
 
+    function currentFort() {
+      if (!state) return null;
+      return forts.find(fort => Math.abs(state.distance - fort.at) <= fort.width);
+    }
+
     function trainBounds() {
       const w = window.innerWidth;
       const h = window.innerHeight;
@@ -848,6 +867,8 @@
       state.fuel -= Math.max(0.025, (0.055 + state.speed * 0.105) * (1 - state.fuelSaver)) * dt;
       state.spawnClock -= dt;
       state.houseSpawnClock -= dt;
+      state.guardPursuit = Math.max(0, state.guardPursuit - dt);
+      state.guardSpawnClock -= dt;
       state.muzzleFlash = Math.max(0, state.muzzleFlash - dt * 8);
       state.shake = Math.max(0, state.shake - dt * 12);
 
@@ -873,26 +894,71 @@
       }
 
       if (state.spawnClock <= 0) {
-        spawnEnemy();
-        state.spawnClock = isNight() ? 1.35 + Math.random() * 1.55 : 2.4 + Math.random() * 1.8;
+        if (!currentFort()) spawnEnemy();
+        state.spawnClock = currentFort() ? 5.5 + Math.random() * 3 : isNight() ? 1.35 + Math.random() * 1.55 : 2.4 + Math.random() * 1.8;
       }
 
       if (state.houseSpawnClock <= 0) {
-        spawnHouseZombie();
-        state.houseSpawnClock = isNight() ? 3.8 + Math.random() * 3.8 : 8 + Math.random() * 7;
+        if (!currentFort()) spawnHouseZombie();
+        state.houseSpawnClock = currentFort() ? 8 + Math.random() * 5 : isNight() ? 3.8 + Math.random() * 3.8 : 8 + Math.random() * 7;
       }
+
+      updateGuardPursuit(dt);
 
       updateEnemies(dt);
       updateBullets(dt);
       updateEnemyShots(dt);
       updateCrewSystems(dt);
+      updateFortDefense(dt);
       updateParticles(dt);
       updateDevMode();
 
       if (state.distance >= state.routeLength) win();
       if (state.train <= 0) lose("The engine gave out under fire. The payroll never reached Fort Mercy.");
       if (state.cargo <= 0) lose("The cargo was lost to thieves and chaos along the rail.");
-      if (state.crew <= 0) lose("Your crew was overrun before the train could reach the fort.");
+      if (state.crew <= 0) lose("You were killed before the train could reach the fort.");
+    }
+
+    function updateGuardPursuit(dt) {
+      if (state.guardPursuit <= 0) return;
+      if (state.guardSpawnClock <= 0) {
+        spawnPack("guard", 2);
+        state.guardSpawnClock = 2.2 + Math.random() * 1.8;
+        addLog("Border guards are still chasing the train.");
+      }
+    }
+
+    function updateFortDefense(dt) {
+      const fort = currentFort();
+      if (!fort) {
+        state.fortSafeLog = false;
+        return;
+      }
+      if (!state.fortSafeLog) {
+        addLog(`${fort.name} machine gunners cover the train. It is safe to wait out the night here.`);
+        state.fortSafeLog = true;
+      }
+      state.crew = Math.min(state.maxCrew, state.crew + dt * 1.8);
+      state.fortGunClock -= dt;
+      if (state.fortGunClock <= 0) {
+        for (let i = 0; i < fort.guns; i++) autoShootFromFort(fort, i);
+        state.fortGunClock = 0.22;
+      }
+    }
+
+    function autoShootFromFort(fort, index) {
+      if (!enemies.length) return;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const fortX = fortScreenX(fort);
+      const origin = { x: fortX - 130 + index * 85, y: h * 0.58 - 120 };
+      const target = enemies.slice().sort((a, b) => Math.hypot(a.x - origin.x, a.y - origin.y) - Math.hypot(b.x - origin.x, b.y - origin.y))[0];
+      if (!target || Math.hypot(target.x - origin.x, target.y - origin.y) > w * 0.65) return;
+      const dx = target.x - origin.x;
+      const dy = target.y - origin.y;
+      const d = Math.hypot(dx, dy) || 1;
+      bullets.push({ x: origin.x, y: origin.y, vx: dx / d * 980, vy: dy / d * 980, life: 0.9, damage: 30, source: "fort" });
+      burst(origin.x, origin.y, "#ffd86a", 4);
     }
 
     function updateDevMode() {
@@ -1037,9 +1103,11 @@
         state.cargo -= Math.random() < 0.35 ? 10 : 0;
       }
       spawnPack("police", 3);
-      spawnPack("bandit", 2);
+      spawnPack("guard", 3);
+      state.guardPursuit = 24;
+      state.guardSpawnClock = 1.2;
       state.nextEncounter = Math.min(state.nextEncounter, state.distance + 7);
-      addLog("You run the checkpoint. A pursuit posse opens fire and another stop is alerted ahead.");
+      addLog("You run the checkpoint. Border guards chase the train and keep spawning until you outrun them.");
     }
 
     function refuseLawConsequence() {
@@ -1214,16 +1282,16 @@
     function spawnOne(type, origin) {
       const side = Math.random() < 0.5 ? -1 : 1;
       const y = 330 + Math.random() * 210;
-      const hp = type === "zombie" ? 18 : type === "zombieSheriff" ? 30 : type === "dynamiteZombie" ? 22 : type === "bounty" ? state.bounty.hp : 24;
+      const hp = type === "zombie" ? 18 : type === "zombieSheriff" ? 30 : type === "dynamiteZombie" ? 22 : type === "guard" ? 34 : type === "bounty" ? state.bounty.hp : 24;
       enemies.push({
         type,
         x: origin ? origin.x : side < 0 ? -40 : window.innerWidth + 40,
         y: origin ? origin.y : y,
         hp,
         maxHp: hp,
-        speed: type === "zombie" ? 38 + Math.random() * 18 : type === "dynamiteZombie" ? 54 + Math.random() * 22 : type === "zombieSheriff" ? 34 + Math.random() * 14 : 66 + Math.random() * 34,
-        attack: type === "dynamiteZombie" ? 18 : type === "zombie" || type === "zombieSheriff" ? 7 : type === "police" ? 9 : 8,
-        value: type === "bounty" ? state.bounty.reward : type === "police" ? 22 : 15,
+        speed: type === "zombie" ? 38 + Math.random() * 18 : type === "dynamiteZombie" ? 54 + Math.random() * 22 : type === "zombieSheriff" ? 34 + Math.random() * 14 : type === "guard" ? 88 + Math.random() * 36 : 66 + Math.random() * 34,
+        attack: type === "dynamiteZombie" ? 18 : type === "zombie" || type === "zombieSheriff" ? 7 : type === "guard" ? 10 : type === "police" ? 9 : 8,
+        value: type === "bounty" ? state.bounty.reward : type === "police" || type === "guard" ? 22 : 15,
         shootClock: type === "zombieSheriff" ? 1.2 + Math.random() * 1.5 : type === "zombie" || type === "dynamiteZombie" ? 999 : 0.8 + Math.random() * 1.7,
         side
       });
