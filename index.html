@@ -702,6 +702,7 @@
     let keys = {};
     let aim = { x: window.innerWidth * 0.68, y: window.innerHeight * 0.46 };
     let typedCode = "";
+    let lastHotbarSignature = "";
     let last = performance.now();
     let pausedForEvent = false;
 
@@ -804,6 +805,7 @@
       addLog(`Class selected: ${klass.name}.`);
       addLog("Depot master: Deliver the sealed payroll to Fort Mercy.");
       addLog(`Wanted poster posted: ${state.bounty.name}, $${state.bounty.reward}.`);
+      lastHotbarSignature = "";
       updateHud();
     }
 
@@ -959,6 +961,12 @@
       const d = Math.hypot(dx, dy) || 1;
       bullets.push({ x: origin.x, y: origin.y, vx: dx / d * 980, vy: dy / d * 980, life: 0.9, damage: 30, source: "fort" });
       burst(origin.x, origin.y, "#ffd86a", 4);
+    }
+
+    function fortScreenX(fort) {
+      const w = window.innerWidth;
+      const lead = fort.at - state.distance;
+      return w * 0.5 + lead * 18;
     }
 
     function updateDevMode() {
@@ -1623,6 +1631,9 @@
     function renderHotbar() {
       if (!ui.hotbar || !state) return;
       const items = hotbarItems();
+      const signature = items.map((item, index) => `${index === state.selectedSlot}|${item.disabled ? 1 : 0}|${item.name}|${item.count}`).join(";");
+      if (signature === lastHotbarSignature) return;
+      lastHotbarSignature = signature;
       ui.hotbar.innerHTML = "";
       items.forEach((item, index) => {
         const slot = document.createElement("button");
@@ -1851,10 +1862,15 @@
     }
 
     function drawFort(w, h, night) {
-      if (!state || state.distance < 172) return;
-      const progress = Math.min(1, (state.distance - 172) / 48);
-      const x = w * (1.18 - progress * 0.72);
+      if (!state) return;
+      forts.forEach(fort => drawFortModel(fort, w, h, night));
+    }
+
+    function drawFortModel(fort, w, h, night) {
+      const x = fortScreenX(fort);
+      if (x < -320 || x > w + 320) return;
       const y = h * 0.58;
+      const active = currentFort() === fort;
       ctx.fillStyle = night ? "#2b3028" : "#6a6f4d";
       ctx.fillRect(x - 210, y - 96, 420, 104);
       for (const tx of [-176, 176]) {
@@ -1866,13 +1882,36 @@
       ctx.fillStyle = "#18110d";
       ctx.fillRect(x - 58, y - 78, 116, 86);
       ctx.fillStyle = "#d8a23c";
-      ctx.font = "700 18px Arial";
+      ctx.font = "700 15px Arial";
       ctx.textAlign = "center";
-      ctx.fillText("FORT MERCY", x, y - 112);
+      ctx.fillText(fort.name.toUpperCase(), x, y - 112);
       ctx.fillStyle = "rgba(255, 229, 150, 0.7)";
       ctx.fillRect(x - 138, y - 64, 30, 20);
       ctx.fillRect(x + 108, y - 64, 30, 20);
+      drawFortGuns(fort, x, y, active);
       ctx.textAlign = "start";
+    }
+
+    function drawFortGuns(fort, x, y, active) {
+      for (let i = 0; i < fort.guns; i++) {
+        const gx = x - 130 + i * 85;
+        const gy = y - 120;
+        ctx.fillStyle = active ? "#f0c15a" : "#2b2723";
+        ctx.fillRect(gx - 12, gy + 14, 34, 8);
+        ctx.fillStyle = "#202324";
+        ctx.fillRect(gx - 8, gy, 48, 11);
+        ctx.fillRect(gx - 2, gy + 10, 9, 24);
+        ctx.fillStyle = "#7b6f5a";
+        ctx.beginPath();
+        ctx.arc(gx, gy + 5, 7, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (active) {
+        ctx.fillStyle = "#ffe8a2";
+        ctx.font = "700 11px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText("SAFE FORT COVER", x, y - 174);
+      }
     }
 
     function drawTrack(w, h) {
@@ -2270,10 +2309,15 @@
     function loop(now) {
       const dt = Math.min(0.035, (now - last) / 1000);
       last = now;
-      if (!state) state = newState();
-      update(dt);
-      draw();
-      updateHud();
+      try {
+        if (!state) state = newState();
+        update(dt);
+        draw();
+        updateHud();
+      } catch (err) {
+        console.error(err);
+        addLog(`Runtime error fixed next frame: ${err.message}`);
+      }
       requestAnimationFrame(loop);
     }
 
